@@ -20,7 +20,7 @@ docker buildx ls
 ```
 You should get a list of the architectures supported (which should include `linux/amd64`).
 
-From here onwards, just download this [`Dockerfile`](https://www.theraleighregister.com/dockerfile.html) and place it in the 
+From here onwards, just download this [`Dockerfile`](https://raw.githubusercontent.com/polygl0ts/bambi-meetings/master/guides/Dockerfile) and place it in the 
 directory where you'll be doing your hacking (We'll be using here `~/Desktop/polygl0ts`)
 
 Now, go to the directory where you stored the `Dockerfile` and run the following
