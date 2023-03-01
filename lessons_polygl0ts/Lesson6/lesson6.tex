@@ -1,0 +1,382 @@
+\documentclass[aspectratio=169]{beamer}
+\usepackage[normalem]{ulem}
+
+
+\usepackage{../theme/flagbot}
+\usepackage{pgfpages}
+
+%\setbeameroption{show notes on second screen}
+
+\tikzstyle{freecell}=[fill=none]
+
+\newcommand{\reg}[1]{\%\mintinline{asm}{#1}}
+\newcommand{\hex}[1]{\mintinline{python}{0x#1}}
+\newcommand{\naddr}[2]{\begin{tabular}{l}#1\\\hex{#2}\end{tabular}}
+\newcommand{\docl}[1]{(\textbf{\href{#1}{Documentation}})}
+
+\hypersetup{colorlinks,linkcolor=,urlcolor=brightblue}
+
+\setbeamertemplate{navigation symbols}{}
+
+\showsectionframe
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title Setup
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{Lesson 6: Introduction to Reversing C++ Binaries}
+\subtitle{Please Stop Compiling With O3}
+\author{Leonardo Galli}
+\date{\today}
+
+\begin{document} 
+\titleframe
+
+\tocframe
+\section{Readying IDA}
+\begin{frame}
+	\frametitle{Useful Plugins}
+	\begin{itemize}
+		\item \href{https://github.com/igogo-x86/HexRaysPyTools}{HexRaysPyTools}: Extremely useful for quickly creating structures without having to find every offset that might be a field.
+		\item \href{https://github.com/RicBent/Classy}{Classy}: Makes working with vtables and child classes a lot easier.
+	\end{itemize}
+\end{frame}
+\begin{frame}
+	\frametitle{Other Settings}
+	\begin{itemize}
+		\item Make sure to regularly create a snapshot of your database! (File $\to$ Take Database Snapshot)
+		\item Create / Open Classy Database (Classy $\to$ Create / Open)
+		\item Make sure that compiler options are correct (Options $\to$ Compiler)
+		\item (Optional) Always show demangled names (Options $\to$ Demangled names $\to$ Select Names)
+	\end{itemize}
+\end{frame}
+
+\section{Theory}
+\begin{frame}[fragile]
+	\frametitle{C++ Class Layout in Memory}
+
+\begin{codebox}{c}
+// Usually stored in the data section.
+struct vtable {
+	void (*func1)();
+	void (*func2)();
+};
+
+struct class {
+	vtable* vtbl;
+	int member1;
+	int member2;
+};
+\end{codebox}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+	\frametitle{C++ Patterns in a Decompiler}
+\begin{codebox}{c}
+// Initialize new instance of class
+__int64 v1 = operator new(sizeof(class));
+*v1 = gvtable; // stored somewhere in data.
+*(v1 + 4) = 0;
+*(v1 + 8) = 0;
+\end{codebox}
+\begin{codebox}{c}
+// Call a vtable function
+(*(void (*)())(*(_QWORD*)v1 + 8))();
+\end{codebox}
+
+\end{frame}
+
+\section{Reconstructing Classes}
+
+\begin{frame}[fragile]
+    \frametitle{Finding vtables and Inheritence Hierarchy}
+    \begin{itemize}
+        \item Search for vtable in IDA, you should find something like this:
+    \end{itemize}
+\begin{codebox}{asm}
+40FFC0 ; `vtable for'Polygon
+40FFC0 _ZTV7Polygon    dq 0                    ; offset to this
+40FFC8                 dq offset _ZTI7Polygon  ; `typeinfo for'Polygon
+40FFD0 vtable      dq offset sub_408D40    ; DATA XREF: sub_408D40+11↑o
+\end{codebox}
+\begin{itemize}
+    \item Go to \inlinecode[asm]{_ZTI7Polygon} and search cross references for ``reference to parent's type name'', giving you a location close to any child classes:
+\end{itemize}
+\begin{codebox}{asm}
+3D40 ; public Triangle :
+3D40 ;   public /* offset 0x0 */ Polygon
+3D40 ; `typeinfo for'Triangle
+\end{codebox}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Using Classy}
+\begin{itemize}
+    \item With the information gathered from before, start creating the hierarchy in classy
+    \item Then add the correct vtable to every class in classy
+    \item If possible, rename the functions correctly and add arguments in classy
+    \item Details in demo later!
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Creating Structures for Members}
+
+\begin{itemize}
+    \item Start with the base class and search for cross references to the vtable
+    \item These are locations where class is constructed
+    \item Use Structure Builder (right click $\to$ Show Structure Builder) to scan variable that is assigned the vtable
+    \item This will automatically try to figure out how the struct layout should look like
+    \item Go into any functions that use the newly allocated struct and scan as well
+    \item Once satisfied, click finalize, you will be prompted to save the struct
+    \item We first need to make some changes!
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Allowing Inheritence}
+\begin{itemize}
+    \item Surround everything except the first vtable field in another struct, named type\_members, e.g.:
+\begin{codebox}{c}
+struct class {
+    vtable* vtbl;
+    struct class_members {
+        int member1;
+        int member2;
+    } mbrs;
+};
+\end{codebox}
+    \item Now you can hit save
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Adding Subclasses}
+\begin{itemize}
+    \item Works very similar to the base class, but you search for cross references to the vtable of the subclass
+    \item Also, you want to have the members struct inherit from the base member struct and delete any fields that are duplicate, e.g.:
+\begin{codebox}{c}
+struct subclass {
+    subvtable* vtbl;
+    struct subclass_members : class_members {
+        // int member1; dup
+        // int member2; dup
+        int member3;
+    } mbrs;
+};
+\end{codebox}
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Renaming Vtable Functions}
+    \begin{itemize}
+        \item Once you created a struct, renaming vtable functions is not as easy anymore.
+        \item If you rename them, the created vtable struct will not be automatically renamed as well!
+        \item However, you can just go to the location of the vtable in the data section and press V
+        \item This will ``recreate'' the vtable fixing up the namings!
+    \end{itemize}
+\end{frame}
+
+{
+\showsubsectionframe
+
+\section{C++ STL}
+\begin{frame}[fragile]
+	\frametitle{What is the C++ STL?}
+	\begin{itemize}
+		\item Standard Template Library, is the library containing all the C++ types you know and love: \inlinecode[cpp]{std::string, std::vector, std::map}
+		\item Two major issues present itself when reversing C++ binaries with STL types:
+		\begin{itemize}
+			\item When compiled with \inlinecode[c]{O3}, about 90\% of STL code will be inlined
+			\item Memory layouts of STL types are different for every major OS and often not very intuitive
+		\end{itemize}
+	\end{itemize}
+\end{frame}
+
+\subsection{Strings}
+\begin{frame}[fragile]
+    \frametitle{Memory Layout}
+    \begin{itemize}
+        \item struct of size 32, if string is less than 16 bytes, everything is stored in the struct
+        \item otherwise, allocated on heap, in steps of powers of 2
+    \end{itemize}
+\begin{codebox}{c}
+struct basic_string
+{
+    char *begin_; // actual string data
+    size_t size_; // actual size
+    union
+    {
+        size_t capacity_; // used if larger than 15 bytes
+        char sso_buffer[16]; // used if smaller than 16 bytes
+    };
+};	
+\end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Inlined Initializers}
+\begin{codebox}{c}
+// v47 is of type basic_string!
+v48 = 0LL;
+v47 = (__int64)&v49;
+LOBYTE(v49) = 0;
+// once retyped:
+v47.size_ = 0LL;
+v47.begin_ = v47.sso_buffer;
+v47.sso_buffer[0] = 0;
+\end{codebox}
+
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Inlined Constructors}
+\begin{codebox}{c}
+// somewhere in the function, you might have this:
+std::__throw_logic_error("basic_string::_M_construct null not valid");
+// The whole function is probably just a string constructor,
+// possible signatures:
+string_construct(basic_string*, char* begin, char* end);
+string_construct(basic_string*, basic_string*); // Copy
+string_construct(basic_string*, char* begin, size_t size);
+\end{codebox}
+\end{frame}
+
+\subsection{Vectors}
+\begin{frame}[fragile]
+    \frametitle{Memory Layout}
+    \begin{itemize}
+        \item struct of size 24, stores start, end and max pointer
+        \item array is allocated on the heap, pointer type is dependent on vector elements
+    \end{itemize}
+\begin{codebox}{c}
+// Stores Point objects
+struct vector_point
+{
+    Point* start;
+    Point* end;
+    Point* max;
+};
+// Stores Point pointers, more common
+struct vector_point_p
+{
+    Point** start;
+    Point** end;
+    Point** max;
+};
+\end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Inlined Size}
+\begin{itemize}
+    \item In case of storing pointers, size calculation is straight forward:
+\end{itemize}
+\begin{codebox}{c}
+size_t size = (vec.end - vec.start) >> 3; // div by 8
+\end{codebox}
+\begin{itemize}
+    \item In other cases, the division might look more painful:
+\end{itemize}
+\begin{codebox}{c}
+// assume vec is a vector<char[5]>;
+// div by 5
+size_t size = ((vec.end - vec.start) * 0xCCCCCCCCCCCCCCCD) >> 2;
+\end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Inlined Methods}
+\begin{codebox}{c}
+// Will often contain something like this:
+std::__throw_out_of_range_fmt
+// However, might not indicate that the whole function is from STL!
+// Common append inlined method:
+Point** end = vec->end;
+if ( end == vec->max ) {
+    // allocate more memory
+    result = sub_4090C0(&vec->start, end, (Point *)&newp);
+} else {
+    if ( end ) {
+        result = newp;
+        *end = newp;
+    }
+    vec->end = end + 1;
+}
+\end{codebox}
+    
+\end{frame}
+
+\subsection{Maps}
+
+\begin{frame}[fragile]
+    \frametitle{Memory Layout}
+    \begin{itemize}
+        \item Implemented using a red-black tree, so complex memory layout
+    \end{itemize}
+\begin{codebox}{c}
+enum std::_Rb_tree_color : __int32
+{
+    _S_red = 0x0,
+    _S_black = 0x1,
+};
+struct std::_Rb_tree_node_base
+{
+    std::_Rb_tree_color _M_color;
+    struct std::_Rb_tree_node* _M_parent;
+    struct std::_Rb_tree_node* _M_left;
+    struct std::_Rb_tree_node* _M_right;
+};
+\end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Memory Layout}
+\begin{codebox}{c}
+struct std::map
+{
+    void* allocator; // uninteresting
+    std::_Rb_tree_node_base _M_header;
+    size_t _M_node_count;
+};
+// For a map of type map<string, Point*>
+struct std::_Rb_tree_node : std::_Rb_tree_node_base
+{
+    struct string_point_pair
+    {
+        basic_string string;
+        Point* point;
+    } pair;
+};
+\end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Inlined Initalization}
+\begin{codebox}{c}
+v42 = operator new(0x30LL);
+*(_DWORD *)(v42 + 8) = 0;
+*(_QWORD *)(v42 + 16) = 0LL;
+*(_QWORD *)(v42 + 40) = 0LL;
+*(_QWORD *)(v42 + 24) = v42 + 8;
+*(_QWORD *)(v42 + 32) = v42 + 8;
+// After applying type:
+map = (std::map*)operator new(0x30LL);
+map->_M_t._M_impl._M_header._M_color = 0;
+map->_M_t._M_impl._M_header._M_parent = 0LL;
+map->_M_t._M_impl._M_node_count = 0LL;
+map->_M_t._M_impl._M_header._M_left = &map->_M_t._M_impl._M_header;
+map->_M_t._M_impl._M_header._M_right = &map->_M_t._M_impl._M_header;
+\end{codebox}
+    
+\end{frame}
+}
+
+\section{Demo}
+\begin{frame}
+	\frametitle{Demo Time}
+\end{frame}
+
+\end{document}

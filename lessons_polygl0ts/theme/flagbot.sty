@@ -1,0 +1,231 @@
+% \usepackage[utf8]{inputenx} % For æ, ø, å
+\usepackage{csquotes}       % Quotation marks
+\usepackage{microtype}      % Improved typography
+\usepackage{amssymb}        % Mathematical symbols
+\usepackage{mathtools}      % Mathematical symbols
+\usepackage[absolute, overlay]{textpos} % Arbitrary placement
+\setlength{\TPHorizModule}{\paperwidth} % Textpos units
+\setlength{\TPVertModule}{\paperheight} % Textpos units
+\usepackage{tikz}
+\usetikzlibrary{overlay-beamer-styles,shapes,positioning,arrows,calc,arrows.meta}  % Overlay effects for TikZ
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{xkeyval}
+
+\newcommand{\themedir}{../theme/}
+%\DeclareOptionX{themedir}{\renewcommand{\themedir}{#1}}
+%\ProcessOptionsX\relax
+
+\usepackage{minted}[cachedir=/tmp]
+
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{listings, minted, skins}
+
+\usemintedstyle{flagbot}
+
+\tcbset{listing engine=minted}
+
+% FIXME: shouldn't have to set coltext here :(
+% (see flagbot-pygments/flagbot/__init__.py)
+\newtcblisting{codebox}[1]{listing only, minted language=#1,
+    colback=darkpurple, coltext=codeboxforeground, enhanced, frame hidden, minted options={fontsize=\small,escapeinside=||}, left=2mm}
+\newtcbinputlisting{codeboxf}[2]{listing only, minted language=#1,
+    colback=darkpurple, coltext=codeboxforeground, enhanced, frame hidden, minted options={fontsize=\small,escapeinside=||}, left=2mm, listing file={#2}}
+
+\DeclareTotalTCBox{\inlinecode}{ O{text} v }{verbatim,colback=darkpurple, enhanced, frame hidden, coltext=white}{\mintinline{#1}{#2}}
+\DeclareTotalTCBox{\inlineverb}{ O{text} v }{verbatim,colback=darkpurple, enhanced, frame hidden}{\color{#1}#2}
+
+\newcommand\myonly[2]{\only<#1>{#2}}
+\newcommand{\nline}[1]{\myonly{#1}{\setbeamercolor{math text}{fg=blueedge}\large$\Leftarrow$}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Colors
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Purple
+\definecolor{darkpurple}{HTML}{000000}
+\definecolor{purple}{HTML}{54518C}
+\definecolor{brightpurple}{HTML}{e73c2b} 
+
+\definecolor{arrowss}{HTML}{2be79a} 
+\definecolor{arrows}{HTML}{2b78e7} 
+\definecolor{polyred}{HTML}{e73c2b} 
+
+\colorlet{bgcolor}{darkpurple!50!black}
+
+% Blue
+%\definecolor{blueedge}{HTML}{15BDFC}
+%\definecolor{blueedge}{HTML}{2be79a}
+\definecolor{blueedge}{HTML}{2b78e7}
+%\definecolor{brightblue}{HTML}{AFEDEE}
+\definecolor{brightblue}{HTML}{888888}
+
+% Red
+\definecolor{redflag}{HTML}{DB133C}
+\definecolor{darkredflag}{HTML}{800104}
+
+% Green
+\definecolor{darkgreen}{HTML}{2B6F51}
+\definecolor{brightgreen}{HTML}{47B685}
+
+% polygray
+\definecolor{polygray}{HTML}{d6d6d6}
+
+% Codebox foreground color
+% TODO: keep in sync with flagbot-pygments/flagbot/__init__.py
+% also FIXME: even though the hex code is copied verbatim, for some reason the colors are still slightly different
+\definecolor{codeboxforeground}{HTML}{E7E9DB}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Other Setup
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\setbeamercolor{background canvas}{bg=bgcolor}
+\setbeamercolor{frametitle}{fg=polyred}
+\setbeamercolor{titlelike}{fg=polyred}
+\setbeamercolor{normal text}{fg=polygray}
+\setbeamercolor{section in head/foot}{fg=white}
+\setbeamercolor{section in toc}{fg=white}
+\setbeamercolor{math text}{fg=white}
+
+\setbeamercolor{block title alerted} {fg = white, bg=redflag}
+\setbeamercolor{block body alerted} {bg = darkredflag}
+
+\setbeamercolor{block title}{fg=polyred}
+
+\setbeamercolor{itemize item}{fg=arrows}
+\setbeamercolor{itemize subitem}{fg=purple}
+\setbeamercolor{enumerate item}{fg=polyred}
+\setbeamercolor{caption name}{fg=brightpurple}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Footer
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\setbeamertemplate{footline}
+{
+    \hbox to \paperwidth
+    {%
+        \begin{beamercolorbox}[wd = 0.25\paperwidth,
+                               ht = 2.25ex,
+                               dp = 1ex, left]
+                              {section in head/foot}
+
+                \includegraphics[width=0.5cm, height=0.5cm]{{\themedir}FlagbotBotOnly.png}
+                %\hspace*{2em}
+                \usebeamerfont{author in head/foot}
+                \insertshortauthor
+                \hfil
+        \end{beamercolorbox}%
+        \begin{beamercolorbox}[wd = 0.5\paperwidth,
+                               ht = 2.25ex,
+                               dp = 1ex, center]
+                              {section in head/foot}
+
+                %\hfil
+                %\usebeamerfont{title in head/foot}
+                %\insertshorttitle\hspace*{2ex}---\hspace*{2ex}\insertsection
+                %\hfil
+        \end{beamercolorbox}%
+        \begin{beamercolorbox}[wd = 0.25\paperwidth,
+                               ht = 2.25ex,
+                               dp = 1ex, right, rightskip=2ex]
+                              {section in head/foot}
+
+                \hfil
+                \usebeamerfont{date in head/foot}
+                %\insertshortdate
+                \hspace*{2em}
+                \insertframenumber{} / \inserttotalframenumber
+        \end{beamercolorbox}
+    }
+    \vskip0pt
+}
+
+
+% \AtBeginSection[]{
+%   \begin{frame}
+%   \vfill
+%   \centering
+%   \begin{beamercolorbox}[sep=8pt,center,rounded=true]{title}
+%     \usebeamerfont{title}\insertsectionhead\par%
+%   \end{beamercolorbox}
+%   \vfill
+%   \end{frame}
+% }
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Commands
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newcommand{\showsectionframe}
+{
+  \AtBeginSection[]{
+    \begin{frame}
+    \begin{center}
+      \usebeamercolor[fg]{section title}
+      \usebeamerfont{section title}
+      \insertsectionhead\par
+    \end{center}
+    \end{frame}
+  }
+}
+
+\newcommand{\hidesectionframe}
+{
+  \AtBeginSection[]{}
+}
+
+\newcommand{\showsubsectionframe}
+{
+  \AtBeginSubsection[]{
+    \begin{frame}
+    \begin{center}
+      \usebeamercolor[fg]{section title}
+      \usebeamerfont{section title}
+      \insertsectionhead\par
+      \ifx\insertsubsectionhead\@empty\else
+        \usebeamercolor[fg]{subsection title}
+        \usebeamerfont{subsection title}
+        \insertsubsectionhead
+      \fi
+    \end{center}
+    \end{frame}
+  }
+}
+
+\newcommand{\hidesubsectionframe}
+{
+  \AtBeginSubsection[]{}
+}
+
+\newcommand{\titleframe}{%
+{
+\setbeamertemplate{footline}{} 
+\begin{frame}
+  \titlepage
+\end{frame}
+}
+}
+
+\newcommand{\tocframe}{
+    {
+    \setbeamertemplate{footline}{} 
+    \begin{frame}
+        \setbeamertemplate{footline}{} 
+        \frametitle{Table of Contents}
+        \tableofcontents
+    
+    \end{frame}
+    }
+}
+
+% XXX: not sure if this is the best way to do this, but whatever
+\newcommand{\highlight}[1]{\textbf{\color{arrowss!70!brightblue} #1}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title Setup
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \providecommand{\themedir}{../theme/}
+\titlegraphic{\includegraphics[width=0.2\textwidth]{{\themedir}FlagbotLargeFlag.png}}
+\institute{EPFL - \texttt{polygl0ts}}
+% Not sure why this is needed?
+\renewcommand{\thefootnote}{\arabic{footnote}}
