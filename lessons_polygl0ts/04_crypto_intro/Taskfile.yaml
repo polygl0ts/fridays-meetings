@@ -1,0 +1,14 @@
+# https://taskfile.dev
+
+version: '3'
+
+tasks:
+  default:
+    deps: [ pdf, lint ]
+  pdf:
+    cmds:
+      - latexrun --latex-cmd xelatex --latex-args=-shell-escape main.tex
+  lint:
+    cmds:
+      - chktex -q main.tex
+      - lacheck main.tex
