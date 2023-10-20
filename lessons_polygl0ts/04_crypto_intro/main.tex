@@ -6,6 +6,9 @@
 % warns about obsolete commands
 \usepackage{nag}
 
+% fractions
+\usepackage{xfrac}
+
 %% Font preferences
 %\usepackage[oldstyle,semibold]{libertinus} % not good on black bg
 \usepackage[oldstyle,semibold]{noto}
@@ -56,7 +59,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Title Setup
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\title{crypto survival guide}
+\title{CTF Cryptography}
 \author{\texttt{lourkeur}}
 \institute{\polyglots}
 \date{\today}
@@ -80,25 +83,18 @@
 		And I'm going to tell you how to get there for absolutely free.
 	}
 \end{frame}
+\section{Introduction}
 \begin{frame}
 	\frametitle{What is crypto?}
 	\note{
-		So first thing is what am I doing exactly?
-		What is this crypto thing?
-
-		So yeah it stands for cryptology and cryptography.
-		We're not talking about the other ``cryptos''.
-		There's like twenty thousand by now or something?
-		Anyways.
+		crypto is about coins like this, big numbers, international conspiracies, and all of this dangerous stuff.
+		It is the usage of mathematics to maintain confidentiality or integrity of information
+		You can encrypt of course, but you can do more than that
 	}
 \end{frame}
 \begin{frame}
 	\frametitle{What is crypto?}
 	\includegraphics[width=\textwidth]{crypto-ag.jpg}
-	\note{
-		This type of crypto.
-		Mathematical tools that people use to protect their flags.
-	}
 \end{frame}
 \begin{frame}
 	\frametitle{Which crypto?}
@@ -115,40 +111,174 @@
 		but we will also cover a bit of classical
 	}
 \end{frame}
+\section{Theory}
 \begin{frame}
 	\frametitle{Prerequisites}
 	\begin{itemize}
 	\pause{}
 \item discrete algebra
 \item probability theory
-	\pause{}
-\item crypto basics
 	\end{itemize}
 	\note{
 		one bad thing with the crypto category is it can be less approachable because of all the math.
 		OTOH it's also an opportunity to learn!
-		let's list them a bit.
-		I'm not going to do a show of hands to avoid singling anyone out.
-		You can think for yourself.
 
-		Looking at algebra and probabilities I think most EPFL bachelor programs include those.
-		Other tech universities are probably similar.
-		Anyways, if you're not comfortable with some of those elements, ask around!
-
-		for crypto basics there's Computer Security in the bachelor an minors program here.
-		If you did well on that course you're going to do well. If not, I recommended a free talk by JP Aumasson in the announcements this week. so here's it again, don't hesitate to check it out.
+		We are going to cover some of the basics today
 	}
 \end{frame}
 \begin{frame}
-	\frametitle{Introduction to Cryptography}
-	\biglink{https://youtu.be/ah5rIeKDNsU}
-\end{frame}
-\begin{frame}
-	\frametitle{How to approach a crypto chal}
+	\frametitle{Randomness}
+	Let's play a game~!
+
 	\note{
-		let's look at how I approach a challenge.
+		game of guess the coin heads or tails
+		lesson: assuming the coinflip is truly random, 50\% chance of winning at most
+	}
+	\pause{}
+	\begin{itemize}
+		\item I flip a coin
+		\item You win if you guess the outcome
+	\end{itemize}
+	\begin{equation*}
+		P(\text{win}) = \sfrac{1}{2}
+	\end{equation*}
+\end{frame}
+\begin{frame}
+	\frametitle{Pseudorandomness}
+	Let's play a game~! (again)
+
+	\pause{}
+	\begin{itemize}
+		\item The deterministic, polynomial time black box gets a private key of $k$ bits
+		\item For any input, the blackbox returns 0 or 1 with equal probability
+		\item You are also polynomial time in $O(k)$
+		\item You can flip coins
+		\item You win if you guess the output
+	\end{itemize}
+	\note{
+		Here's this black box. (show debit card) We know it runs a deterministic algorithm, but there's also a secret key in it that we can't pull out.
+		The goal is still to guess heads or tails. Also, we are computationally bounded to polynomial time in the length of the key. Can you do better than 50\%?
+	}
+	\pause{}
+	\begin{equation*}
+	P(\text{win at pseudorandom coin game}) \ge \sfrac{1}{2} + 2^k
+	\end{equation*}
+\end{frame}
+\begin{frame}
+	\frametitle{Why play games?}
+
+	\begin{description}
+		\item[Game] setup with win conditions and rules
+		\item[Adversary] PPT algorithm that tries to win the game
+		\item[PRF] pseudorandom function, blackbox from game \#2
+	\end{description}
+	\note{with games, we can formalize the security properties of constructs}
+\end{frame}
+\begin{frame}
+	\frametitle{Message Authentication Codes}
+	\begin{itemize}
+		\item You leave data laying around unsupervised
+		\item You want to know if anyone modifies it
+		\item Compute a PRF on the data and append it
+		\item Later, recompute the PRF and see if it matches the MAC
+	\end{itemize}
+\end{frame}
+\begin{frame}
+	\frametitle{pseudorandom permutation}
+	\begin{description}
+		\item[PRF] $f: {\{0,1\}}^k \rightarrow {\{0,1\}}^* \rightarrow {\{0,1\}}^l$
+		\item[PRP] $p:  {\{0,1\}}^k \rightarrow {\{0,1\}}^l \rightarrow {\{0,1\}}^l$, $p^{-1}$ exists
+	\end{description}
+	Supports a simplistic encryption scheme: 
+	\begin{itemize}
+		\item encrypt with $p$
+		\item decrypt with $p^{-1}$
+		\item keep your key secret!
+	\end{itemize}
+	\note{
+		pseudorandom permutations must be reversible by definition,
+		so the codomain has to be the same as the domain.
+		This is a basic building block for encryption.
+		We'll see the pitfalls with that, but we have an interesting intuition there.
 	}
 \end{frame}
+\begin{frame}
+	\frametitle{public-key cryptography}
+	\begin{itemize}
+		\item symmetric primitives have one type of key.
+		\item public-key encryption primitives have two different key.
+		\item signing key and verifying key (MAC $\rightarrow$ digital signature)
+		\item encryption key and decryption key
+	\end{itemize}
+	\note{
+		again the simplified idea is you can publish your encryption key, and people can send you messages.
+	}
+\end{frame}
+	\section{Practice}
+\begin{frame}
+	\frametitle{Cryptographic Hash functions}
+	\begin{itemize}
+		\item PRF but the key is public
+		\item MD5, SHA-1, SHA-2 are insecure as MACs
+		\item SHA-3 and Blake are like PRFs in practice
+	\end{itemize}
+\end{frame}
+\begin{frame}
+	\frametitle{Block ciphers}
+	\begin{itemize}
+		\item modelled after PRPs
+		\item DES (bad), Blowfish, Rĳndael/AES
+		\item can build encryption systems using them
+	\end{itemize}
+\end{frame}
+\begin{frame}
+	\frametitle{Block cipher mode: Electronic code book}
+	apply the same PRP to every block
+\end{frame}
+\begin{frame}
+	\frametitle{Block cipher mode: Electronic code book}
+	\begin{center}
+		\includegraphics[height=0.8\textheight]{Tux_ECB.png}
+	\end{center}
+\end{frame}
+\begin{frame}
+	\frametitle{Block cipher mode}
+	We want different outputs even if two input blocks are the same!
+	\note{
+		there are some simple ideas and some more complicated ones, let's look at some simple ideas
+		anyone?
+		(you're allowed to use xor)
+	}
+\end{frame}
+\begin{frame}
+	\frametitle{Cipher Block Chaining Mode}
+	\begin{itemize}
+		\item pick a per-message, non-secret initialization vector IV
+		\item split plaintext in blocks
+		\item pad the last block
+		\item $CT_0 = Enc(IV \oplus PT_0)$
+		\item $CT_1 = Enc(CT_0 \oplus PT_1)$
+		\item \ldots
+	\end{itemize}
+\end{frame}
+\begin{frame}
+	\frametitle{Cipher Feedback Mode}
+	\begin{itemize}
+		\item pick a per-message, non-secret initialization vector IV
+		\item compute a keystream $Enc(IV)$, $Enc(Enc(IV))$, etc.
+		\item xor keystream with plaintext to get ciphertext
+	\end{itemize}
+\end{frame}
+\begin{frame}
+	\frametitle{what have we done? Stream cipher}
+	\begin{itemize}
+		\item generate a long, single-use, pseudorandom keystream
+		\item xor with plaintext
+		\item decryption is the same as encryption
+		\item Example: Chacha20 and variants, RC4 (broken)
+	\end{itemize}
+\end{frame}
+\section{Challenge methodology}
 \begin{frame}
 	\frametitle{The CTF cheatsheet}
 	\pause{}
@@ -264,13 +394,6 @@ Python has super\texttt{pow}ers
 
 \end{frame}
 \begin{frame}
-	\frametitle{Polygl0ts docker}
-	\begin{center}
-		\biglink{https://ghcr.io/polygl0ts/crypto.docker}
-		\note{we have a docker set up with some common libraries here if you'd like. It has jupyter in it}
-	\end{center}
-\end{frame}
-\begin{frame}
 	\frametitle{Tools of the trade: Sage}
 	\note{
 		The last tool is SageMath. It's a sofware system for mathematicians.
@@ -303,12 +426,17 @@ Python has super\texttt{pow}ers
 \end{frame}
 \begin{frame}
 	\frametitle{GIVE ME FLAGS}
-	\begin{center}
-	\biglink{https://friday.polygl0ts.ch/}
-	\end{center}
+	\begin{itemize}
+		\item happens on the Discord
+		\item more bits = harder
+	\end{itemize}
 	\note{
 		I know I'm boring and some of you have been listening to boring nerds talk about crypto for way too long, so it's time to roll
 	}
-
+\end{frame}
+\begin{frame}
+	\begin{center}
+		\biglink{https://discord.gg/VEtQUytz}
+	\end{center}
 \end{frame}
 \end{document}
