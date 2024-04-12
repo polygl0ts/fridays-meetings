@@ -1,0 +1,472 @@
+\documentclass[aspectratio=169]{beamer}
+
+\usepackage{../theme/polygl0ts}
+\usepackage{drawstack}
+
+\tikzstyle{freecell}=[fill=none]
+
+\newcommand{\reg}[1]{\mintinline{asm}{#1}}
+\newcommand{\hex}[1]{\mintinline{python}{0x#1}}
+\newcommand{\naddr}[2]{\begin{tabular}{l}#1\\\hex{#2}\end{tabular}}
+\newcommand{\docl}[1]{(\textbf{\href{#1}{Documentation}})}
+
+\setbeamertemplate{navigation symbols}{}
+%\setbeameroption{show notes on second screen=left}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title Setup
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{Return Oriented Programming}
+\subtitle{or: the tale of the developer basically providing you with all you
+    need for your exploit}
+\author{fl0w}
+\date{\today}
+
+\begin{document}
+\titleframe
+
+\tocframe
+
+\section{Refresher: Stack Buffer Overflows}
+
+\subsection{The Stack Layout}
+
+\begin{frame}
+    \frametitle{The Stack}
+    \begin{itemize}
+        \item Data structure in memory
+        \item Holds function-local information in \emph{stack frames}
+        \item Each stack frame contains...
+            \begin{itemize}
+                \item ...local variables (e.g., \mintinline{c}{char buf[8]; int
+                    x = 1;})
+                \item ...metadata (e.g., the frame base pointer of the previous
+                    stack frame, stack canaries)
+                \item ...control flow information (e.g., the return address)
+            \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Example}
+    \begin{columns}
+    \begin{column}{0.5\textwidth}
+        \begin{codebox}{c}
+int callme() {
+    char name[16];
+    gets(name); |\nline{3}|
+    printf("Hello %s", name); |\nline{4}|
+    return 2; |\nline{5}|
+}
+
+int main(int argc, char* argv[]) {
+    long x = 4; |\nline{1}|
+    long y = callme(); |\nline{2}|
+    printf("x + y = %d", x + y); |\nline{6}|
+    return 0; |\nline{7}|
+}
+        \end{codebox}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+        \begin{figure}[H]
+            \centering
+            \begin{drawstack}[scale=0.7, every node/.style={scale=0.7,outer sep=0}]
+                \startframe
+                \cell{\only<1-5>{\hex{ZZZZZZZZ}}\only<6->{\mintinline{c}{2}}} \cellcom{\naddr{y}{7fd8}}
+                \cell{\only<1>{\hex{ZZZZZZZZ}}\only<2->{\mintinline{c}{4}}} \cellcom{\naddr{x}{7fd0}} 
+                \finishframe{{\tt main}\\stack frame}
+                \only<1-5>{
+                    \startframe
+                    \cell{\only<1-2>{\hex{ZZZZZZZZ}}\only<3->{\hex{4012ae}}} \cellcom{\naddr{saved \reg{rip}}{7fc8}}
+                    \cell{\only<1-2>{\hex{ZZZZZZZZ}}\only<3->{\hex{7fe0}}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                    \cell{\only<1-2>{\hex{ZZZZZZZZ}}\only<3->{\hex{75838ab44420e400}}} \cellcom{\naddr{stack canary}{7fb8}}
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[8:15]}}{7fb0}}
+                    \node[draw,minimum height=1cm,anchor=east] (n8) at (2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[8]}}\only<4->{\mintinline{c}{'s'}}};
+                    \node[] at (0, \value{cellnb}) {\only<-3>{\dots} \only<4->{}};
+                    \node[draw,minimum height=1cm,anchor=west] (n15) at (-2, \value{cellnb}) {\mintinline{c}{n[15]}};
+                    \only<4->{\node[draw,minimum height=1cm,anchor=east] (n9) at ($ (n8.west) $, \value{cellnb}) {\mintinline{c}{'\0'}}};
+                    \cell{} \cellcom{\naddr{\mintinline{c}{name[0:7]}}{7fa8}}
+                    \node[draw,minimum height=1cm,anchor=east] (n0) at (2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[0]}}\only<4->{\mintinline{c}{'p'}}};
+                    \node[] at (0, \value{cellnb}) {\dots};
+                    \node[draw,minimum height=1cm,anchor=west] (n7) at (-2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[7]}}\only<4->{\mintinline{c}{'t'}}};
+                    \finishframe{{\tt callme}\\stack frame}
+                }
+                \only<6->{
+                    \startframe
+                    \cell{\only<6->{\hex{ZZZZZZZZ}}} \cellcom{\naddr{saved \reg{rip}}{7fc8}}
+                    \cell{\only<6->{\hex{ZZZZZZZZ}}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                    \cell{\only<6->{\hex{ZZZZZZZZ}}} \cellcom{\naddr{stack canary}{7fb8}}
+                    \cell{\dots}
+                    \cell{\dots}
+                    \finishframe{{\tt printf}\\stack frame}
+                }
+
+                \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+            \end{drawstack}
+
+
+            \caption{Example stack}
+            \label{fig:stack}
+        \end{figure}
+    \end{column} 
+    \end{columns}
+
+\end{frame}
+
+\subsection{Stack Buffer Overflows}
+
+\begin{frame}[fragile]
+    \frametitle{Buffer Overflow}
+    \begin{columns}
+    \begin{column}{0.5\textwidth}
+        \begin{codebox}{c}
+int callme() {
+    char name[16];
+    read(STDIN_FILENO, name, 256); |\nline{3}|
+    printf("Hello %s", name); |\nline{4}|
+    return 2; |\nline{5}|
+}
+
+int main(int argc, char* argv[]) {
+    long x = 4; |\nline{1}|
+    long y = callme(); |\nline{2}|
+    printf("x + y = %d", x + y);
+    return 0;
+}
+        \end{codebox}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+        \begin{figure}[H]
+            \centering
+            \begin{drawstack}[scale=0.7, every node/.style={scale=0.7,outer sep=0}]
+                \startframe
+                \cell{\only<1-3>{\hex{ZZZZZZZZ}}\only<4->{\emph{shellcode}}} \cellcom{\naddr{y}{7fd8}}
+                \cell{\only<1>{\hex{ZZZZZZZZ}}\only<2-3>{\mintinline{c}{4}}\only<4->{\emph{shellcode}}} \cellcom{\naddr{x}{7fd0}} 
+                \finishframe{{\tt main}\\stack frame}
+                \startframe
+                \cell{\only<1-2>{\hex{ZZZZZZZZ}}\only<3-3>{\hex{4012ae}}\only<4->{\hex{7fd0}}} \cellcom{\naddr{saved \reg{rip}}{7fc8}}
+                \cell{\only<1-2>{\hex{ZZZZZZZZ}}\only<3-3>{\hex{7fe0}}\only<4->{\hex{4141414141414141}}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                \cell{\only<1-2>{\hex{ZZZZZZZZ}}\only<3->{\hex{75838ab44420e400}}} \cellcom{\naddr{stack canary}{7fb8}}
+                \cell{} \cellcom{\naddr{\mintinline{c}{name[8:15]}}{7fb0}}
+                \node[draw,minimum height=1cm,anchor=east] (n8) at (2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[8]}}\only<4->{\mintinline{c}{'A'}}};
+                \node[] at (0, \value{cellnb}) {\only<-3>{\dots} \only<4->{}};
+                \node[draw,minimum height=1cm,anchor=west] (n15) at (-2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[15]}}\only<4->{\mintinline{c}{'A'}}};
+                \cell{} \cellcom{\naddr{\mintinline{c}{name[0:7]}}{7fa8}}
+                \node[draw,minimum height=1cm,anchor=east] (n0) at (2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[0]}}\only<4->{\mintinline{c}{'A'}}};
+                \node[] at (0, \value{cellnb}) {\dots};
+                \node[draw,minimum height=1cm,anchor=west] (n7) at (-2, \value{cellnb}) {\only<1-3>{\mintinline{c}{n[7]}}\only<4->{\mintinline{c}{'A'}}};
+                \finishframe{{\tt callme}\\stack frame}
+
+                \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+            \end{drawstack}
+
+
+            \caption{Example stack}
+            \label{fig:overflow}
+        \end{figure}
+    \end{column} 
+    \end{columns}
+\end{frame}
+
+\note[itemize]{
+    \item We're assuming we know the canary (which we'd usually need to leak
+        first)
+    \item Why change \texttt{gets} to \texttt{read}? \texttt{gets} stops at
+        null byte which we have in the canary
+}
+
+\section{Code Reuse Attacks}
+
+\begin{frame}
+    \frametitle{Code Reuse Attacks}
+    \begin{itemize}
+        \item Can't inject shellcode onto the stack if stack is non-executable
+            (NX bit, DEP)
+        \item But...
+        \pause
+        \item There's plenty of code already in the binary!
+    \end{itemize}
+
+    \setbeamercolor{block title alerted} {fg = white, bg=brightgreen}
+    \setbeamercolor{block body alerted} {bg = darkgreen}
+    \begin{alertblock}{\textbf{Code Reuse}}
+    {
+        Instead of injecting \emph{code} into the program's address space, we
+        inject \emph{pointers} to already existing code!
+    }
+    \end{alertblock}
+\end{frame}
+
+\subsection{\texttt{ret2XXX}}
+
+\begin{frame}[fragile]
+    \frametitle{\texttt{ret2win}}
+    \begin{itemize}
+        \item Idea: just branch to the function that gives you a shell
+    \end{itemize}
+    \begin{codebox}{c}
+void win(void) {
+    system("/bin/sh");
+}
+
+int main(int argc, char* argv[]) {
+    // ...
+    return 0;
+}
+    \end{codebox}
+\end{frame}
+
+\note[itemize]{
+    \item Contrived example
+    \item Not real-world applicable but often in (beginner-friendly) CTFs
+}
+
+\begin{frame}[fragile]
+    \frametitle{\texttt{ret2libc}}
+    \begin{itemize}
+        \item Idea: set up arguments, branch directly to \mintinline{c}{system}
+    \end{itemize}
+    \begin{codebox}{c}
+// in libc
+int system(const char *command) {
+    // ...
+}
+
+// in exe
+int main(int argc, char* argv[]) {
+    // ...
+    return 0;
+}
+    \end{codebox}
+\end{frame}
+
+\note[itemize]{
+    \item Not directly feasible anymore... ASLR, calling conventions, etc.
+}
+
+\subsection{Return Oriented Programming (ROP)}
+
+\begin{frame}
+    \frametitle{Return Oriented Programming (ROP)}
+    \begin{itemize}
+        \item Idea: split exploit code up into smaller chunks $\Rightarrow$
+            \emph{gadgets}
+        \item Each gadget consists of a few (often only 1-2) instructions
+            followed by a return instruction, e.g., \mintinline{asm}{pop rax;}
+            \mintinline{asm}{ret}
+        \item Chain up gadgets to achieve the same logic as with a shellcode
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{ROP -- Example}
+    \begin{columns}
+    \begin{column}{0.5\textwidth}
+        Assume...
+        \begin{itemize}
+            \item ...we want to set \reg{rbx} to \hex{deadbeef},
+            \item ...we do not have a gadget to set \reg{rbx} directly,
+            \item ...but we have \mintinline{asm}{pop rax;} \mintinline{asm}{ret} at \hex{40124}...
+            \item ...and \mintinline{asm}{mov rbx, rax;} \mintinline{asm}{ret} at \hex{41788}.
+        \end{itemize}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+        \begin{figure}[H]
+            \centering
+            \begin{drawstack}[scale=0.7, every node/.style={scale=0.7,outer sep=0}]
+                \startframe
+                \cell{\dots} \cellcom{\naddr{???}{7fe0}}
+                \cell{\dots} \cellcom{\naddr{???}{7fd8}}
+                \cell{\dots} \cellcom{\naddr{???}{7fd0}}
+                \finishframe{{\tt caller}\\stack frame}
+                \startframe
+                \cell{\hex{ZZZZZZZZ}} \cellcom{\naddr{saved \reg{rip}}{7fc8}}
+                \cell{\hex{ZZZZZZZZ}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                \cell{\dots} \cellcom{\naddr{???}{7fb8}}
+                \cell{\dots} \cellcom{\naddr{???}{7fb0}}
+                \finishframe{{\tt vuln}\\stack frame}
+
+                \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+            \end{drawstack}
+
+
+            \caption{ROP stack}
+            \label{fig:pre-rop-example}
+        \end{figure}
+    \end{column} 
+    \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{ROP -- Example}
+    \begin{columns}
+    \begin{column}{0.5\textwidth}
+        Then...
+        \begin{itemize}
+            \item ...we can overwrite the return address with the address of
+                the \mintinline{asm}{pop rax} gadget,
+            \item ...the stack slot afterwards with the value to pop,
+            \item ...and the next stack slot with the address of the
+                \mintinline{asm}{mov rbx, rax} gadget.
+        \end{itemize}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+        \begin{figure}[H]
+            \centering
+            \begin{drawstack}[scale=0.7, every node/.style={scale=0.7,outer sep=0}]
+                \startframe
+                \cell{\dots} \cellcom{\naddr{???}{7fe0}}
+                \cell{\hex{41788}} \cellcom{\naddr{???}{7fd8}}
+                \cell{\hex{deadbeef}} \cellcom{\naddr{???}{7fd0}}
+                \finishframe{{\tt caller}\\stack frame}
+                \startframe
+                \cell{\hex{40124}} \cellcom{\naddr{saved \reg{rip}}{7fc8}}
+                \cell{\hex{4141414141414141}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                \cell{\dots} \cellcom{\naddr{???}{7fb8}}
+                \cell{\dots} \cellcom{\naddr{???}{7fb0}}
+                \finishframe{{\tt vuln}\\stack frame}
+
+                \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+            \end{drawstack}
+
+            \caption{ROP stack}
+            \label{fig:post-rop-example}
+        \end{figure}
+    \end{column} 
+    \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{ROP -- Example}
+    \begin{columns}
+    \begin{column}{0.5\textwidth}
+        \begin{codebox}{asm}
+vuln+100:
+    ret |\nline{1}|
+
+40124:
+    pop rax |\nline{2}|
+    ret |\nline{3}|
+
+41788:
+    mov rbx, rax |\nline{4}|
+    ret |\nline{5}|
+        \end{codebox}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+        \begin{figure}[H]
+            \centering
+            \begin{drawstack}[scale=0.7, every node/.style={scale=0.7,outer sep=0}]
+                \startframe
+                \cell{\dots} \alt<4->{\cellptr{\reg{rsp}}}{\cellcom{\naddr{???}{7fe0}}}
+                \cell{\hex{41788}} \alt<3>{\cellptr{\reg{rsp}}}{\cellcom{\naddr{???}{7fd8}}}
+                \cell{\hex{deadbeef}} \alt<2>{\cellptr{\reg{rsp}}}{\cellcom{\naddr{???}{7fd0}}}
+                \finishframe{{\tt caller}\\stack frame}
+                \startframe
+                \cell{\hex{40124}} \alt<1>{\cellptr{\reg{rsp}}}{\cellcom{\naddr{saved \reg{rip}}{7fc8}}}
+                \cell{\hex{4141414141414141}} \cellcom{\naddr{saved \reg{rbp}}{7fc0}}
+                \cell{\dots} \cellcom{\naddr{???}{7fb8}}
+                \cell{\dots} \cellcom{\naddr{???}{7fb0}}
+                \finishframe{{\tt vuln}\\stack frame}
+
+                \draw[->] (2.15,0) -- node[auto, sloped]{stack growth} (2.15, \value{cellnb}-1);
+            \end{drawstack}
+
+            \caption{ROP stack}
+            \label{fig:post-rop-example}
+        \end{figure}
+    \end{column} 
+    \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Gadgets Where???}
+    Returns are commonly right after the function epilogue...
+
+    \begin{codebox}{objdump}
+$ objdump -d /usr/bin/ls
+...
+1349c:    48 83 c4 48        add    $0x48,%rsp
+134a0:    c3                 ret
+...
+    \end{codebox}
+\end{frame}
+
+\begin{frame}
+    \frametitle{x86 quirks}
+    Disassemble the byte sequence \hex{b8894108c3}:
+
+    \begin{itemize}
+        \item \mintinline{asm}{mov eax, 0xc3084189}
+        \item \mintinline{asm}{.byte b8;} \mintinline{asm}{mov DWORD PTR
+            [rcx+0x8], eax;} \mintinline{asm}{ret}
+    \end{itemize}
+
+    \pause
+    \setbeamercolor{block title alerted} {fg = white, bg=brightgreen}
+    \setbeamercolor{block body alerted} {bg = darkgreen}
+    \begin{alertblock}{\textbf{Variable Instruction Length}}
+    {
+        Instructions in x86(\_64) do not have a fixed length.
+        Depending on the offset you start disassembling at, you get different
+        results!
+    }
+    \end{alertblock}
+\end{frame}
+
+\subsection{ROP Tooling}
+
+\begin{frame}[fragile]
+    \frametitle{\texttt{ropper}}
+    \texttt{ropper} helps finding ROP gadgets
+
+    Usage: \mintinline{bash}{ropper -f <binary>}
+    \docl{https://github.com/sashs/Ropper}
+
+    Example:
+    \begin{codebox}{objdump-nasm}
+$ ropper --type rop -f /usr/bin/ls
+...
+...
+0x0000000000006ff5: xor eax, edx; xor edx, edx; div rsi; mov rax, rdx; ret; 
+0x0000000000006bf7: xor edx, edx; div rsi; mov rax, rdx; ret; 
+0x0000000000006f97: xor edx, edx; ror rax, 3; div rsi; mov rax, rdx; ret; 
+0x0000000000007004: xor edx, edx; xor rax, rdx; xor edx, edx; div rsi; mov rax, rdx; ret; 
+0x0000000000007078: xor r8d, r8d; mov eax, r8d; ret; 
+0x0000000000006f80: xor r8d, r8d; mov rax, r8; ret; 
+0x0000000000006ff4: xor rax, rdx; xor edx, edx; div rsi; mov rax, rdx; ret; 
+
+1609 gadgets found
+    \end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{\texttt{pwntools}}
+    \texttt{pwntools} has ROP functionality built in!
+    \docl{https://docs.pwntools.com/en/stable/rop/rop.html}
+
+    Example:
+    \begin{codebox}{python}
+from pwn import *
+
+exe = ELF("vuln")
+rop = ROP(exe)
+rop.eax = 0xdeadbeef  # Find a gadget that allows us to set eax to 0xdeadbeef
+rop.call(vuln.symbols.win)  # Find a gadget that calls win in the binary
+rop_bytes = rop.chain()  # Dump the actual ROP chain to send to the binary
+    \end{codebox}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Similar Techniques}
+    \begin{itemize}
+        \item Call-oriented programming (gadgets ending in
+            \mintinline{asm}{call}) $\Rightarrow$ pushes onto the stack instead
+            of poping
+        \item Jump-oriented programming (gadgets ending in
+            \mintinline{asm}{jmp}) $\Rightarrow$ does not modify the stack
+        \item \href{https://en.wikipedia.org/wiki/Sigreturn-oriented_programming}{Sigreturn Oriented Programming}
+    \end{itemize}
+\end{frame}
+
+\end{document}

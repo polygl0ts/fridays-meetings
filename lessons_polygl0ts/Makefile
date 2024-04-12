@@ -1,5 +1,5 @@
 tex_files := $(wildcard Lesson*/lesson*.tex)
-pdf_files := $(patsubst %.tex,%.pdf,$(tex_files)) ad/ad.pdf
+pdf_files := $(patsubst %.tex,%.pdf,$(tex_files)) ad/ad.pdf rop/rop.pdf
 lesson_names := $(notdir $(tex_files))
 lesson_names := $(patsubst %.tex,%,$(lesson_names))
 clean_targets := $(patsubst %,clean-%,$(lesson_names))
