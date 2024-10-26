@@ -1,0 +1,74 @@
+\documentclass[aspectratio=169]{beamer}
+\usepackage[normalem]{ulem}
+
+\usepackage{../theme/polygl0ts}
+
+% warns about obsolete commands
+\usepackage{nag}
+
+% fractions
+\usepackage{xfrac}
+
+%% Font preferences
+%\usepackage[oldstyle,semibold]{libertinus} % not good on black bg
+\usepackage[oldstyle,semibold]{noto}
+
+% self-explanatory
+\usepackage{qrcode}
+
+%\setbeameroption{show notes on second screen}
+
+\tikzstyle{freecell}=[fill=none]
+
+\newcommand{\reg}[1]{\%\mintinline{asm}{#1}}
+\newcommand{\hex}[1]{\mintinline{python}{0x#1}}
+\newcommand{\naddr}[2]{\begin{tabular}{l}#1\\\hex{#2}\end{tabular}}
+\newcommand{\docl}[1]{(\textbf{\href{#1}{Documentation}})}
+
+
+%% Proper 1337 typography
+\newcommand\SlashedZero{{%
+\addfontfeatures{RawFeature=+zero}%
+\addfontfeatures{RawFeature=-pnum}%
+\addfontfeatures{RawFeature=-onum}%
+0%
+}}
+\newcommand\organizers{\SlashedZero{}rganizers}
+\newcommand\polyglots{polygl\SlashedZero{}ts}
+
+\newcommand\biglink[1]{
+	\begin{center}
+		\colorbox{white}{
+		\textcolor{black}{
+		\qrcode*[height=.8\textheight]{#1}
+	}
+	}
+
+		\url{#1}
+	\end{center}
+}
+
+\hypersetup{colorlinks,linkcolor=,urlcolor=brightblue}
+
+\setbeamertemplate{navigation symbols}{}
+
+\setbeameroption{show notes}
+
+\showsectionframe{}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title Setup
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{Web3 CTF}
+\author{\texttt{0xbbjubjub}}
+\institute{\polyglots}
+\date{8 November 2024}
+\begin{document}
+\titleframe{}
+
+\begin{frame}
+	\begin{center}
+		\biglink{https://discord.gg/VEtQUytz}
+	\end{center}
+\end{frame}
+\end{document}

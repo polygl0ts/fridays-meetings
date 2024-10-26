@@ -1,0 +1,7 @@
+: main.tex assets/<all> |> latexrun --latex-cmd xelatex --latex-args=-shell-escape main.tex |> main.pdf ^latex.out/.*
+
+# linters
+: main.tex |> chktex -q main.tex |>
+: main.tex |> lacheck main.tex |>
+
+.gitignore
