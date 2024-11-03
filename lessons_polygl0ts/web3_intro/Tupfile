@@ -1,4 +1,4 @@
-: main.tex assets/<all> |> latexrun --latex-cmd xelatex --latex-args=-shell-escape main.tex |> main.pdf ^latex.out/.*
+: main.tex assets/<all> |> latexrun --latex-cmd xelatex --latex-args=-shell-escape main.tex |> main.pdf ^latex.out/.* ^minted-main/.*
 
 # linters
 : main.tex |> chktex -q main.tex |>

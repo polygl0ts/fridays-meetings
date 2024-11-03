@@ -195,7 +195,9 @@
 \begin{frame}
 	\frametitle{Ethereum Virtual Machine}
 	Stack-based VM, 256-bit(!), metered
-	\pause{}
+	\bigskip
+
+	\centering
 	\url{evm.codes}
 \end{frame}
 
@@ -206,8 +208,10 @@
 
 \begin{frame}
 	\frametitle{Input/Output}
-	\emph{calldata}: message from whoever called
-	\emph{returndata}: the dual of calldata
+	\begin{description}
+		\item[Calldata] message from whoever called
+		\item[Returndata] the dual of calldata
+	\end{description}
 \end{frame}
 
 \begin{frame}
@@ -247,6 +251,73 @@
 	\emph{Transactional} database: failure cancels changes
 
 	%\texttt{REVERT} undoes any changes, unwinds the stack, but can be recovered from
+\end{frame}
+
+\section{Your Tools}
+\begin{frame}
+	\frametitle{The Solidity Language}
+	\centering
+	\includegraphics[height=.5\textheight]{assets/solidity.png}
+\end{frame}
+
+\begin{frame}
+	\inputminted{solidity}{assets/helloworld.sol}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Solidity Resources}
+	\begin{itemize}
+		\item \url{solidity-by-example.org}
+		\item \url{cryptozombies.io}
+	\end{itemize}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Foundry}
+	Toolkit based around Solidity scripting
+
+	Used on the chall side today
+
+	Template provided and recommended for solving
+
+	\centering \url{getfoundry.sh}
+\end{frame}
+
+%\begin{frame}
+	%\frametitle{\ttfamily web3.py}
+%
+%\end{frame}
+
+\begin{frame}
+	\frametitle{Block Explorer}
+	Web interface to examine the blockchain
+
+	\url{etherscan.io}
+
+	\url{10.95.33.126} (courtesy of BSA)
+\end{frame}
+
+\begin{frame}
+	\frametitle{Optional: a Browser ``Wallet''}
+	Generates and holds your private keys
+
+	This is what most end-users do
+
+	Needed for some CTFs, will get in the way today
+\end{frame}
+
+\begin{frame}
+	Recommended: MetaMask (Firefox/Chromium)
+	
+	Interesting: Rivet (Chromium only)
+
+	Also useful: \url{impersonator.xyz}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Are we doing this for real?}
+	\pause{}
+	We use temporary private blockchains
 \end{frame}
 
 \begin{frame}
